@@ -30,17 +30,23 @@ client = TelegramClient(
 ).start()
 
 bot = TelegramClient("bot_new", api_id, api_hash).start()
-
-with open("save.json", "r", encoding="utf-8") as file:
-    data = json.load(file)
-    last_messages = data.get("last_messages", {})
-    for x in last_messages:
-        last_messages[x] = []
-    channels = data.get("channels", {})
-    users = data.get("users", {})
-    blacklist = data.get("blacklist", {})
-    act = data.get("act", [])
-    print(last_messages, channels, users, blacklist, act, sep=",")
+try:
+    with open("save.json", "r", encoding="utf-8") as file:
+        data = json.load(file)
+        last_messages = data.get("last_messages", {})
+        for x in last_messages:
+            last_messages[x] = []
+        channels = data.get("channels", {})
+        users = data.get("users", {})
+        blacklist = data.get("blacklist", {})
+        act = data.get("act", [])
+        print(last_messages, channels, users, blacklist, act, sep=", ")
+except FileNotFoundError:
+    channels = {}
+    users = {}
+    blacklist = {}
+    act = {}
+    last_messages = {}
 
 
 data_to_save = {
@@ -63,18 +69,34 @@ async def handler(event):
     global last_messages
     channel = event.message._sender.username
     for user in channels.get(channel, []):
-        if orig_check(event.message.text, channel) and generate_headline(event.message.text) and not ad_check(event.message.text):
-            if len(last_messages[user]) >= 5:
-                await send_news(user)
-                last_messages[user] = []
-            last_messages[user].append(
-                (
-                    generate_headline(event.message.text),
-                    f"[{channel}](https://t.me/{channel}/{event.message.id})",
-                )
-            )
+        try:
+            if not orig_check(event.message.text, channel):
+                continue
 
-    save()
+            headline = generate_headline(event.message.text)
+            if not headline:
+                continue
+
+            if ad_check(event.message.text):
+                continue
+
+            if user not in last_messages:
+                last_messages[user] = []
+
+            current_messages = last_messages[user]
+            current_messages.append((
+                headline,
+                f"[{channel}](https://t.me/{channel}/{event.message.id})"
+            ))
+
+            if len(current_messages) >= 5:
+                await send_news(user)
+                last_messages[user] = []  
+
+        except Exception as e:
+            print(f"Ошибка обработки для пользователя {user}: {str(e)}")
+
+    save()  
 
 # Проверка на оригинальность
 
@@ -103,17 +125,25 @@ user_steps = {user: [0] for user in users}
 # Рассылка новостей
 
 async def send_news(user):
-    global last_messages
-    text = ""
-    messages = last_messages[user]
-    last_messages[user] = []
-    for i, message in enumerate(messages):
-        if text:
-            text += "\n"
-        text += str(i + 1) + ") " + message[0] + "\n" + message[1] + "\n\n"
-    name = (await bot.get_entity(user)).first_name
-    await bot.send_message(user, f"Сводка новостей для вас, {name}.")
-    await bot.send_message(user, text, link_preview=False)
+    try:
+        messages = last_messages.get(user, [])
+        if not messages:
+            return
+
+        # Формируем текст из последних 5 сообщений
+        text = "\n\n".join(
+            f"{i + 1}) {msg[0]}\n{msg[1]}"
+            for i, msg in enumerate(messages[-5:])
+        )
+
+        name = (await bot.get_entity(user)).first_name
+        await bot.send_message(user, f"Сводка новостей для вас, {name}.")
+        await bot.send_message(user, text, link_preview=False)
+
+    except Exception as e:
+        print(f"Ошибка отправки для {user}: {str(e)}")
+    finally:
+        last_messages[user] = []
 
 # ИНТЕРФЕЙС
 
